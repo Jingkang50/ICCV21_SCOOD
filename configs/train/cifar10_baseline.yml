@@ -1,0 +1,26 @@
+name: cifar10_baseline
+
+dataset:
+  # Training datasets
+  labeled: cifar10 # choices: [cifar10, cifar100]
+  unlabeled: none # choices: [tin, none]
+
+  # Datasets to validate on after every epoch
+  # choices: [cifar10, texture, svhn, cifar100, tin, lsun, places365]
+  test_ood: [tin]
+
+  labeled_batch_size: 128
+  unlabeled_batch_size: 256
+  test_batch_size: 200
+
+network: res18 # choices: [res18, wrn, densenet]
+
+trainer_name: oe
+trainer_args:
+  lambda_oe: 0.0 # weight of oe loss
+
+optim_args:
+  epochs: 100
+  learning_rate: 0.1
+  momentum: 0.9
+  weight_decay: 0.0005
