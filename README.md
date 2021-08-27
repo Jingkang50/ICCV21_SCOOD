@@ -1,6 +1,6 @@
 # SCOOD-UDG (ICCV 2021)
 
-[![paper](https://img.shields.io/badge/Paper-arxiv-b31b1b)](https://arxiv.org)
+[![paper](https://img.shields.io/badge/Paper-arxiv-b31b1b)](https://arxiv.org/abs/2108.11941)
 &nbsp;
 [![projectpage](https://img.shields.io/badge/Project%20Page-online-52b788)](https://jingkang50.github.io/projects/scood)
 &nbsp;
