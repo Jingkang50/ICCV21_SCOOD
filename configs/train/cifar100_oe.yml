@@ -13,7 +13,7 @@ dataset:
   unlabeled_batch_size: 256
   test_batch_size: 200
 
-network: res18 # choices: [res18, wrn, densenet]
+network: wrn # choices: [res18, wrn, densenet]
 
 trainer_name: oe
 trainer_args:

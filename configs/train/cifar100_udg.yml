@@ -13,17 +13,17 @@ dataset:
   unlabeled_batch_size: 256
   test_batch_size: 200
 
-network: res18 # choices: [res18, wrn, densenet]
+network: wrn # choices: [res18, wrn, densenet]
 
 trainer_name: udg
 trainer_args:
   lambda_oe: 0.5 # weight of oe loss
   lambda_aux: 0.1 # weight of auxiliary clustering task loss
-  num_clusters: 1000
+  num_clusters: 2000
   pca_dim: 256 # feature dimension for clustering
   idf_method: udg # choices: [udg, conf, sort, none]
-  purity_ind_thresh: 0.5
-  purity_ood_thresh: 0.5
+  purity_ind_thresh: 0.7
+  purity_ood_thresh: 0.9
   oe_enhance_ratio: 1.0
 
 optim_args:
