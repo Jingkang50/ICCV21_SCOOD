@@ -8,7 +8,7 @@ batch_size: 200
 # Type of interpolation when resizing images
 interpolation: bilinear # choices: [nearest, bilinear]
 
-network: res18 # choices: [res18, wrn, densenet]
+network: wrn # choices: [res18, wrn, densenet]
 
 # Post-processing method
 postprocess: ebo # choices: [none, ebo, odin]

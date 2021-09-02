@@ -74,6 +74,8 @@ python test.py \
 
 ## Results
 
+We report the mean ± std results from the current codebase as follows, which match the performance reported in our original paper.
+
 ### CIFAR-10 (+ Tiny-ImageNet) Results on ResNet18
 
 You can run the following script (specifying the data and output directories) which perform training + testing for our main experimental results:
@@ -83,19 +85,36 @@ You can run the following script (specifying the data and output directories) wh
 bash scripts/cifar10_udg.sh data_dir output_dir
 ```
 
-We report the mean ± std results from the current codebase as follows, which match the performance reported in our original paper.
+| Metrics      |         ODIN |          EBO |           OE |       UDG (ours) |
+| :----------- | -----------: | -----------: | -----------: | ---------------: |
+| FPR95 ↓      | 50.76 ± 3.39 | 50.70 ± 2.86 | 54.99 ± 4.06 | **39.94** ± 3.77 |
+| AUROC ↑      | 82.11 ± 0.24 | 83.99 ± 1.05 | 87.48 ± 0.61 | **93.27** ± 0.64 |
+| AUPR In ↑    | 73.07 ± 0.40 | 76.84 ± 1.56 | 85.75 ± 1.70 | **93.36** ± 0.56 |
+| AUPR Out ↑   | 85.06 ± 0.29 | 85.44 ± 0.73 | 86.95 ± 0.28 | **91.21** ± 1.23 |
+| CCR@FPRe-4 ↑ |  0.30 ± 0.04 |  0.26 ± 0.09 |  7.09 ± 0.48 | **16.36** ± 4.33 |
+| CCR@FPRe-3 ↑ |  1.22 ± 0.28 |  1.46 ± 0.18 | 13.69 ± 0.78 | **32.99** ± 4.16 |
+| CCR@FPRe-2 ↑ |  6.13 ± 0.72 |  8.17 ± 0.96 | 29.60 ± 5.31 | **59.14** ± 2.60 |
+| CCR@FPRe-1 ↑ | 39.61 ± 0.72 | 47.57 ± 3.33 | 64.33 ± 3.44 | **81.04** ± 1.46 |
 
-| Metrics           |         ODIN |          EBO |           OE |     UDG (ours)   |
-| :---------------  | -----------: | -----------: | -----------: | ---------------: |
-| FPR95 ↓           | 50.76 ± 3.39 | 50.70 ± 2.86 | 54.99 ± 4.06 | **39.94** ± 3.77 |
-| AUROC ↑           | 82.11 ± 0.24 | 83.99 ± 1.05 | 87.48 ± 0.61 | **93.27** ± 0.64 |
-| AUPR In ↑         | 73.07 ± 0.40 | 76.84 ± 1.56 | 85.75 ± 1.70 | **93.36** ± 0.56 |
-| AUPR Out ↑        | 85.06 ± 0.29 | 85.44 ± 0.73 | 86.95 ± 0.28 | **91.21** ± 1.23 |
-| CCR@FPRe-4 ↑      |  0.30 ± 0.04 |  0.26 ± 0.09 |  7.09 ± 0.48 | **16.36** ± 4.33 |
-| CCR@FPRe-3 ↑      |  1.22 ± 0.28 |  1.46 ± 0.18 | 13.69 ± 0.78 | **32.99** ± 4.16 |
-| CCR@FPRe-2 ↑      |  6.13 ± 0.72 |  8.17 ± 0.96 | 29.60 ± 5.31 | **59.14** ± 2.60 |
-| CCR@FPRe-1 ↑      | 39.61 ± 0.72 | 47.57 ± 3.33 | 64.33 ± 3.44 | **81.04** ± 1.46 |
+### CIFAR-100 (+ Tiny-ImageNet) Results on WideResNet
 
+You can run the following script (specifying the data and output directories) which perform training + testing for our main experimental results:
+
+**CIFAR-100, UDG**
+```bash
+bash scripts/cifar100_udg.sh data_dir output_dir
+```
+
+ | Metrics      |         ODIN |          EBO |           OE |   UDG (ours) |
+ | :----------- | -----------: | -----------: | -----------: | -----------: |
+ | FPR95 ↓      | 79.59 ± 1.36 | 78.86 ± 1.70 | 80.08 ± 2.80 | 76.03 ± 2.82 |
+ | AUROC ↑      | 77.45 ± 0.77 | 80.13 ± 0.56 | 79.24 ± 2.40 | 79.78 ± 1.41 |
+ | AUPR In ↑    | 75.25 ± 1.20 | 80.18 ± 0.57 | 80.24 ± 3.03 | 79.96 ± 2.02 |
+ | AUPR Out ↑   | 73.2  ± 0.77 | 73.71 ± 0.58 | 73.14 ± 2.19 | 74.77 ± 1.21 |
+ | CCR@FPRe-4 ↑ | 0.43  ± 0.21 | 0.58  ± 0.25 | 2.39  ± 0.74 | 1.47  ± 1.08 |
+ | CCR@FPRe-3 ↑ | 2.31  ± 0.60 | 3.46  ± 0.80 | 7.97  ± 1.47 | 5.43  ± 2.09 |
+ | CCR@FPRe-2 ↑ | 11.01 ± 1.29 | 17.55 ± 1.24 | 21.97 ± 2.92 | 18.88 ± 3.53 |
+ | CCR@FPRe-1 ↑ | 43.2  ± 1.80 | 51.54 ± 0.65 | 49.36 ± 3.98 | 48.95 ± 1.91 |
 
 ## License and Acknowledgements
 This project is open-sourced under the MIT license.
