@@ -173,6 +173,12 @@ bash scripts/cifar100_udg.sh data_dir output_dir
  | CCR@FPRe-2 ↑ | 11.01 ± 1.29 | 17.55 ± 1.24 | 21.97 ± 2.92 | 18.88 ± 3.53 |
  | CCR@FPRe-1 ↑ | 43.2  ± 1.80 | 51.54 ± 0.65 | 49.36 ± 3.98 | 48.95 ± 1.91 |
 
+**Note:**
+The work was originally built on the company's own deep learning framework, based on which we report all the results in the paper.
+We extracted all related code and built this standalone version for release, and checked that most of the results can be reproduced. 
+We noticed that CIFAR-10 can easily match the paper results, but CIFAR-100 benchmark might have a few differences, perhaps due to some minor difference in framework modules and some randomness. 
+We are currently enhancing our codebase and exploring udg on large-scale datasets.
+
 ## License and Acknowledgements
 This project is open-sourced under the MIT license.
 
