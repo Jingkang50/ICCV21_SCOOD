@@ -1,31 +1,42 @@
 import argparse
 import shutil
-import time
 from functools import partial
 from pathlib import Path
 
 import torch
 import torch.backends.cudnn as cudnn
+import yaml
 
 from scood.data import get_dataloader
 from scood.evaluation import Evaluator
-from scood.networks import get_network
-from scood.trainers import get_trainer
-from scood.utils import load_yaml, setup_logger
+from scood.metrics_logger import MetricsLogger
+from scood.utils import create_logger, load_yaml, set_seeds, init_object
+from test import test
 
 
-def main(args, config):
+def main(args, config, test_config):
+    set_seeds(args.seed)
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    # expt_output_dir = (output_dir / config["name"]).mkdir(parents=True, exist_ok=True)
+
+    # Init logger
+    log_dir = output_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logger = create_logger(log_dir)
+
+    logger.info("============ Starting Training ============")
+    logger.info("Initialized logger.")
+    logger.info(yaml.dump(config, default_flow_style=False))
+    logger.info(f"The experiment will be stored in {output_dir}\n")
+    logger.info("")
 
     # Save a copy of config file in output directory
     config_path = Path(args.config)
     config_save_path = output_dir / "config.yml"
     shutil.copy(config_path, config_save_path)
 
-    setup_logger(str(output_dir))
-
+    # FIXME Can be stored in dataset object instead
     benchmark = config["dataset"]["labeled"]
     if benchmark == "cifar10":
         num_classes = 10
@@ -48,7 +59,7 @@ def main(args, config):
         num_workers=args.prefetch,
     )
 
-    if config['dataset']['unlabeled'] == "none":
+    if config["dataset"]["unlabeled"] == "none":
         unlabeled_train_loader = None
     else:
         unlabeled_train_loader = get_dataloader_default(
@@ -77,89 +88,99 @@ def main(args, config):
             num_workers=args.prefetch,
         )
         test_ood_loader_list.append(test_ood_loader)
+    logger.info("Building data done.")
 
     # Init Network #############################################################
-    try:
-        num_clusters = config['trainer_args']['num_clusters']
-    except KeyError:
+    if config['trainer_args']:
+        try:
+            num_clusters = config["trainer_args"]["num_clusters"]
+        except KeyError:
+            num_clusters = 0
+    else:
         num_clusters = 0
 
-    net = get_network(
+    net = init_object(
         config["network"],
-        num_classes,
-        num_clusters=num_clusters,
-        checkpoint=args.checkpoint,
+        config["network_args"],
+        num_classes=num_classes,
+        dim_aux=num_clusters,
     )
+    logger.info(net)
+    logger.info("Building network done.")
+
+    if args.checkpoint:
+        net.load_state_dict(torch.load(args.checkpoint), strict=False)
+        logger.info("Loaded model checkpoint from {args.checkpoint}.")
 
     if args.ngpu > 1:
         net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)))
 
     if args.ngpu > 0:
         net.cuda()
-        torch.cuda.manual_seed(1)
 
     cudnn.benchmark = True  # fire on all cylinders
 
+    # Prepare Training ###########################################################
+    if args.use_wandb:
+        wandb_args = {
+            "name": args.run_id,
+            "id": args.run_id,
+            "group": args.group_id,
+            "project": args.project_name,
+            "config": config,
+        }
+    else:
+        wandb_args = {}
+
+    tensorboard_dir = output_dir / "tensorboard_logs"
+    metrics_logger = MetricsLogger(
+        tensorboard_dir, use_wandb=args.use_wandb, **wandb_args
+    )
+    evaluator = Evaluator(net)
+
     # Init Trainer #############################################################
-    trainer = get_trainer(
-        config['trainer_name'],
+    trainer = init_object(
+        config["trainer"],
+        config["trainer_args"],
         net,
         labeled_train_loader,
         unlabeled_train_loader,
-        config['optim_args'],
-        config['trainer_args'],
+        test_id_loader,
+        test_ood_loader_list,
+        evaluator,
+        metrics_logger,
+        output_dir,
+        args.save_all_model,
+        **config["optim_args"],
     )
+    logger.info("Building trainer done.")
 
-    # Start Training ###########################################################
-    evaluator = Evaluator(net)
+    trainer.train(config["optim_args"]["epochs"])
 
-    output_dir = Path(args.output_dir)
-
-    begin_epoch = time.time()
-    best_accuracy = 0.0
-    for epoch in range(0, config["optim_args"]["epochs"]):
-
-        train_metrics = trainer.train_epoch()
-
-        classification_metrics = evaluator.eval_classification(test_id_loader)
-        evaluator.eval_ood(
-            test_id_loader,
-            test_ood_loader_list,
-            method="full",
-            dataset_type="scood",
+    # Perform Testing ##########################################################
+    if test_config:
+        test(
+            test_config,
+            args.data_dir,
+            args.prefetch,
+            str(output_dir / "best.ckpt"),
+            args.ngpu,
+            str(output_dir / 'results.csv'),
+            metrics_logger=metrics_logger,
         )
 
-        # Save model
-        torch.save(net.state_dict(), output_dir / f"epoch_{epoch}.ckpt")
-        if not args.save_all_model:
-            # Let us not waste space and delete the previous model
-            prev_path = output_dir / f"epoch_{epoch - 1}.ckpt"
-            prev_path.unlink(missing_ok=True)
-
-        # save best result
-        if classification_metrics["test_accuracy"] >= best_accuracy:
-            torch.save(net.state_dict(), output_dir / f"best.ckpt")
-
-            best_accuracy = classification_metrics["test_accuracy"]
-
-        print(
-            "Epoch {:3d} | Time {:5d}s | Train Loss {:.4f} | Test Loss {:.3f} | Test Acc {:.2f}".format(
-                (epoch + 1),
-                int(time.time() - begin_epoch),
-                train_metrics["train_loss"],
-                classification_metrics["test_loss"],
-                100.0 * classification_metrics["test_accuracy"],
-            ),
-            flush=True,
-        )
-
+    metrics_logger.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config",
         help="path to config file",
-        default="configs/train/cifar10_udg.yml",
+        default="configs/train/cifar10.yml",
+    )
+    parser.add_argument(
+        "--test_config",
+        help="specify path to test config file, if want to perform testing after training",
     )
     parser.add_argument(
         "--checkpoint",
@@ -182,10 +203,33 @@ if __name__ == "__main__":
     )
     parser.add_argument("--ngpu", type=int, default=1, help="number of GPUs to use")
     parser.add_argument("--prefetch", type=int, default=4, help="pre-fetching threads.")
+    parser.add_argument(
+        "--seed", type=int, default=42, help="set seed for reproducibility."
+    )
+
+    # wandb arguments
+    parser.add_argument(
+        "--use_wandb",
+        action="store_true",
+        help="whether to use wandb for logging on top of tensorboard",
+    )
+    parser.add_argument(
+        "--project_name",
+        help="name of wandb project to log to",
+    )
+    parser.add_argument(
+        "--run_id",
+        help="unique identifier for this run (used in wandb logging)",
+    )
+    parser.add_argument(
+        "--group_id",
+        help="unique group id for this run (used in wandb logging)",
+    )
 
     args = parser.parse_args()
 
     # Load config file
     config = load_yaml(args.config)
+    test_config = load_yaml(args.test_config) if args.test_config else None
 
-    main(args, config)
+    main(args, config, test_config)

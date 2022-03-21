@@ -1,82 +1,43 @@
-import errno
-import os
-import os.path as osp
-import sys
-import time
+import logging
+from logging import handlers
+from pathlib import Path
+
+from rich.logging import RichHandler
 
 
-def mkdir_if_missing(dirname):
-    """Create dirname if it is missing."""
-    if not osp.exists(dirname):
-        try:
-            os.makedirs(dirname)
-        except OSError as e:
-            if e.errno != errno.EEXIST:
-                raise
+def create_logger(log_dir):
+    # Create logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
 
+    # Create handlers
+    console_handler = RichHandler(markup=True)
+    console_handler.setLevel(logging.DEBUG)
+    info_handler = logging.handlers.RotatingFileHandler(
+        filename=Path(log_dir, "info.log"),
+        maxBytes=10485760,  # 1 MB
+        backupCount=10,
+    )
+    info_handler.setLevel(logging.INFO)
+    error_handler = logging.handlers.RotatingFileHandler(
+        filename=Path(log_dir, "error.log"),
+        maxBytes=10485760,  # 1 MB
+        backupCount=10,
+    )
+    error_handler.setLevel(logging.ERROR)
 
-class Logger:
-    """Write console output to external text file.
+    # Create formatters
+    minimal_formatter = logging.Formatter(fmt="%(message)s")
+    detailed_formatter = logging.Formatter(
+        fmt="%(levelname)s %(asctime)s [%(filename)s:%(funcName)s:%(lineno)d]\n%(message)s\n"
+    )
 
-    Imported from `<https://github.com/Cysu/open-reid/blob/master/reid/utils/logging.py>`_
+    # Hook it all up
+    console_handler.setFormatter(fmt=minimal_formatter)
+    info_handler.setFormatter(fmt=detailed_formatter)
+    error_handler.setFormatter(fmt=detailed_formatter)
+    logger.addHandler(hdlr=console_handler)
+    logger.addHandler(hdlr=info_handler)
+    logger.addHandler(hdlr=error_handler)
 
-    Args:
-        fpath (str): directory to save logging file.
-
-    Examples::
-       >>> import sys
-       >>> import os.path as osp
-       >>> save_dir = 'output/experiment-1'
-       >>> log_name = 'train.log'
-       >>> sys.stdout = Logger(osp.join(save_dir, log_name))
-    """
-
-    def __init__(self, fpath=None):
-        self.console = sys.stdout
-        self.file = None
-        if fpath is not None:
-            mkdir_if_missing(osp.dirname(fpath))
-            self.file = open(fpath, "w")
-
-    def __del__(self):
-        self.close()
-
-    def __enter__(self):
-        pass
-
-    def __exit__(self, *args):
-        self.close()
-
-    def write(self, msg):
-        self.console.write(msg)
-        if self.file is not None:
-            self.file.write(msg)
-
-    def flush(self):
-        self.console.flush()
-        if self.file is not None:
-            self.file.flush()
-            os.fsync(self.file.fileno())
-
-    def close(self):
-        self.console.close()
-        if self.file is not None:
-            self.file.close()
-
-
-def setup_logger(output=None):
-    if output is None:
-        return
-
-    if output.endswith(".txt") or output.endswith(".log"):
-        fpath = output
-    else:
-        fpath = osp.join(output, "log.txt")
-
-    if osp.exists(fpath):
-        # make sure the existing log file is not over-written
-        fpath = osp.join(
-            output, "log-{}.txt".format(time.strftime("-%Y-%m-%d-%H-%M-%S"))
-        )
-
-    sys.stdout = Logger(fpath)
+    return logger

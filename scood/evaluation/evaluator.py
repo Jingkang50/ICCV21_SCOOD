@@ -1,6 +1,7 @@
 import csv
 import os
 from typing import List
+from logging import getLogger
 
 import numpy as np
 import torch
@@ -11,6 +12,7 @@ from torch.utils.data import DataLoader
 
 from .metrics import compute_all_metrics
 
+logger = getLogger()
 
 class Evaluator:
     def __init__(
@@ -68,8 +70,8 @@ class Evaluator:
                 loss_avg += float(loss.data)
 
         metrics = {}
-        metrics["test_loss"] = loss_avg / len(data_loader)
-        metrics["test_accuracy"] = correct / len(data_loader.dataset)
+        metrics["loss"] = loss_avg / len(data_loader)
+        metrics["accuracy"] = correct / len(data_loader.dataset)
 
         return metrics
 
@@ -92,7 +94,7 @@ class Evaluator:
 
             id_name = id_data_loader.dataset.name
 
-            print(f"Performing inference on {id_name} dataset...")
+            logger.info(f"Performing inference on {id_name} dataset...")
             id_pred, id_conf, id_ddood, id_scood = self.inference(
                 id_data_loader, postprocessor
             )
@@ -100,7 +102,7 @@ class Evaluator:
             for i, ood_dl in enumerate(ood_data_loaders):
                 ood_name = ood_dl.dataset.name
 
-                print(f"Performing inference on {ood_name} dataset...")
+                logger.info(f"Performing inference on {ood_name} dataset...")
                 ood_pred, ood_conf, ood_ddood, ood_scood = self.inference(
                     ood_dl, postprocessor
                 )
@@ -115,7 +117,7 @@ class Evaluator:
                 elif dataset_type == "ddood":
                     label = ddood
 
-                print(f"Computing metrics on {id_name} + {ood_name} dataset...")
+                logger.info(f"Computing metrics on {id_name} + {ood_name} dataset...")
                 results = compute_all_metrics(conf, label, pred)
                 self._log_results(results, csv_path, dataset_name=ood_name)
 
@@ -123,9 +125,9 @@ class Evaluator:
 
             results_matrix = np.array(results_matrix)
 
-            print(f"Computing mean metrics...")
-            results_mean = np.mean(results_matrix, axis=0)
-            self._log_results(results_mean, csv_path, dataset_name="mean")
+            logger.info(f"Computing mean metrics...")
+            results = np.mean(results_matrix, axis=0)
+            self._log_results(results, csv_path, dataset_name="mean")
 
         elif method == "full":
             data_loaders = [id_data_loader] + ood_data_loaders
@@ -139,7 +141,7 @@ class Evaluator:
 
             for i, test_loader in enumerate(data_loaders):
                 name = test_loader.dataset.name
-                print(f"Performing inference on {name} dataset...")
+                logger.info(f"Performing inference on {name} dataset...")
                 pred, conf, ddood, scood = self.inference(test_loader, postprocessor)
 
                 pred_list.extend(pred)
@@ -157,14 +159,27 @@ class Evaluator:
             elif dataset_type == "ddood":
                 label_list = ddood_list
 
-            print(f"Computing metrics on combined dataset...")
+            logger.info(f"Computing metrics on combined dataset...")
             results = compute_all_metrics(conf_list, label_list, pred_list)
 
             if csv_path:
                 self._log_results(results, csv_path, dataset_name="full")
 
+        fpr, auroc, aupr_in, aupr_out, ccr_4, ccr_3, ccr_2, ccr_1, accuracy = results
+        return {
+            "fpr": fpr,
+            "auroc": auroc,
+            "aupr_in": aupr_in,
+            "aupr_out": aupr_out,
+            "ccr_4": ccr_4,
+            "ccr_3": ccr_3,
+            "ccr_2": ccr_2,
+            "ccr_1": ccr_1,
+            "accuracy": accuracy,
+        }
+
     def _log_results(self, results, csv_path, dataset_name=None):
-        [fpr, auroc, aupr_in, aupr_out, ccr_4, ccr_3, ccr_2, ccr_1, accuracy] = results
+        fpr, auroc, aupr_in, aupr_out, ccr_4, ccr_3, ccr_2, ccr_1, accuracy = results
 
         write_content = {
             "dataset": dataset_name,
@@ -179,7 +194,6 @@ class Evaluator:
             "ACC": "{:.2f}".format(100 * accuracy),
         }
         fieldnames = list(write_content.keys())
-        # print(write_content, flush=True)
 
         if not os.path.exists(csv_path):
             with open(csv_path, "w", newline="") as csvfile:

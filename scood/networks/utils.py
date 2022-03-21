@@ -1,11 +1,12 @@
 from .resnet18 import ResNet18
 from .wrn import WideResNet
 from .densenet import DenseNet3
+from .networks import ResNet50d
 import torch
 
 
 def get_network(
-    name: str, num_classes: int, num_clusters: int = 0, checkpoint: str = None
+    name: str, num_classes: int, num_clusters: int = 0, checkpoint: str = None, **kwargs
 ):
     if name == "res18":
         net = ResNet18(num_classes=num_classes, dim_aux=num_clusters)
@@ -28,6 +29,13 @@ def get_network(
             dropRate=0.0,
             num_classes=num_classes,
             dim_aux=num_clusters,
+        )
+
+    elif name == "resnet50d":
+        net = ResNet50d(
+            num_classes=num_classes,
+            dim_aux=num_clusters,
+            **kwargs,
         )
 
     else:

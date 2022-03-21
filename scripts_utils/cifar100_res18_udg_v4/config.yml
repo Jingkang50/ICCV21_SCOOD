@@ -1,0 +1,35 @@
+name: cifar100_resnet18_udg
+
+dataset:
+  # Training datasets
+  labeled: cifar100 # choices: [cifar10, cifar100]
+  unlabeled: tin # choices: [tin, none]
+
+  # Datasets to validate on after every epoch
+  # choices: [cifar10, texture, svhn, cifar100, tin, lsun, places365]
+  test_ood: [tin]
+
+  labeled_batch_size: 128
+  unlabeled_batch_size: 256
+  test_batch_size: 200
+
+network: networks.ResNet18
+network_args:
+  pretrained: True
+
+trainer: trainers.UDGTrainer
+trainer_args:
+  lambda_oe: 0.5 # weight of oe loss
+  lambda_aux: 0.1 # weight of auxiliary clustering task loss
+  num_clusters: 1000
+  pca_dim: 256 # feature dimension for clustering
+  idf_method: udg # choices: [udg, conf, sort, none]
+  purity_ind_thresh: 0.7
+  purity_ood_thresh: 0.9
+  oe_enhance_ratio: 2.0
+
+optim_args:
+  epochs: 100
+  learning_rate: 0.1
+  momentum: 0.9
+  weight_decay: 0.0005

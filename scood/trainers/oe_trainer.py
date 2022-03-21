@@ -1,7 +1,11 @@
+import time
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from scood.losses import soft_cross_entropy
+from scood.utils import AverageMeter, MetricMeter
 from torch.utils.data import DataLoader
 
 from .base_trainer import BaseTrainer
@@ -13,68 +17,102 @@ class OETrainer(BaseTrainer):
         net: nn.Module,
         labeled_train_loader: DataLoader,
         unlabeled_train_loader: DataLoader,
+        test_id_loader: DataLoader,
+        test_ood_loader_list: DataLoader,
+        evaluator: object,
+        metrics_logger: object,
+        # Saving args
+        output_dir: Path,
+        save_all_model: bool,
+        # Optim args
         learning_rate: float = 0.1,
         momentum: float = 0.9,
         weight_decay: float = 0.0005,
         epochs: int = 100,
+        # Trainer args
         lambda_oe: float = 0.5,
     ) -> None:
         super().__init__(
             net,
             labeled_train_loader,
+            unlabeled_train_loader,
+            test_id_loader,
+            test_ood_loader_list,
+            evaluator,
+            metrics_logger,
+            output_dir,
+            save_all_model,
             learning_rate=learning_rate,
             momentum=momentum,
             weight_decay=weight_decay,
             epochs=epochs,
         )
-
-        self.unlabeled_train_loader = unlabeled_train_loader
         self.lambda_oe = lambda_oe
+
+    def before_epoch(self):
+        pass
 
     def train_epoch(self):
         self.net.train()  # enter train mode
 
-        loss_avg = 0.0
+        # Track metrics
+        self.metrics = MetricMeter()
+        self.batch_time = AverageMeter()
+        self.data_time = AverageMeter()
+
+        epoch_start_time = time.time()
+
         train_dataiter = iter(self.labeled_train_loader)
+        unlabeled_dataiter = iter(self.unlabeled_train_loader)
 
-        if self.unlabeled_train_loader:
-            unlabeled_dataiter = iter(self.unlabeled_train_loader)
-
-        for train_step in range(1, len(train_dataiter) + 1):
+        for self.batch_idx in range(len(train_dataiter)):
             batch = next(train_dataiter)
+            try:
+                unlabeled_batch = next(unlabeled_dataiter)
+            except StopIteration:
+                unlabeled_dataiter = iter(self.unlabeled_train_loader)
+                unlabeled_batch = next(unlabeled_dataiter)
 
-            data = batch["data"].cuda()
-            # forward
-            logits_classifier = self.net(data)
-            loss = F.cross_entropy(logits_classifier, batch["label"].cuda())
+            self.data_time.update(time.time() - epoch_start_time)
 
-            if self.unlabeled_train_loader:
-                try:
-                    unlabeled_batch = next(unlabeled_dataiter)
-                except StopIteration:
-                    unlabeled_dataiter = iter(self.unlabeled_train_loader)
-                    unlabeled_batch = next(unlabeled_dataiter)
+            # Perform a single batch of training
+            metrics_dict = self.train_step(batch, unlabeled_batch)
 
-                unlabeled_data = unlabeled_batch["data"].cuda()
+            self.batch_time.update(time.time() - epoch_start_time)
+            self.metrics.update(metrics_dict)
 
-                logits_oe = self.net(unlabeled_data)
-                loss_oe = soft_cross_entropy(
-                    logits_oe, unlabeled_batch["soft_label"].cuda()
-                )
+            self.train_step_log(metrics_dict)
 
-                loss += self.lambda_oe * loss_oe
+            self.num_iters += 1
+            epoch_start_time = time.time()
 
-            # backward
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-            self.scheduler.step()
+    def train_step(self, batch, unlabeled_batch):
+        data = batch["data"].cuda()
+        target = batch["label"].cuda()
 
-            # exponential moving average, show smooth values
-            with torch.no_grad():
-                loss_avg = loss_avg * 0.8 + float(loss) * 0.2
+        # Classification loss
+        logits_classifier = self.net(data)
+        loss_cls = F.cross_entropy(logits_classifier, target)
 
-        metrics = {}
-        metrics["train_loss"] = loss_avg
+        # OE loss
+        unlabeled_data = unlabeled_batch["data"].cuda()
 
-        return metrics
+        logits_oe = self.net(unlabeled_data)
+        loss_oe = soft_cross_entropy(logits_oe, unlabeled_batch["soft_label"].cuda())
+
+        loss_oe *= self.lambda_oe
+        loss = loss_cls + loss_oe
+
+        # backward
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        self.scheduler.step()
+
+        # Record and log metrics
+        metrics_dict = {}
+        metrics_dict["train/loss_cls"] = loss_cls
+        metrics_dict["train/loss_oe"] = loss_oe
+        metrics_dict["train/loss"] = loss
+
+        return metrics_dict

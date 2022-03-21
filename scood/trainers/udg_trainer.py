@@ -1,4 +1,7 @@
+import datetime
 import time
+from logging import getLogger
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -9,19 +12,30 @@ from scood.losses import rew_ce, rew_sce
 from scood.utils import sort_array
 from torch.utils.data import DataLoader
 
-from .base_trainer import BaseTrainer
+from .oe_trainer import OETrainer
+
+logger = getLogger()
 
 
-class UDGTrainer(BaseTrainer):
+class UDGTrainer(OETrainer):
     def __init__(
         self,
         net: nn.Module,
         labeled_train_loader: DataLoader,
         unlabeled_train_loader: DataLoader,
+        test_id_loader: DataLoader,
+        test_ood_loader_list: DataLoader,
+        evaluator: object,
+        metrics_logger: object,
+        # Saving args
+        output_dir: Path,
+        save_all_model: bool,
+        # Optim args
         learning_rate: float = 0.1,
         momentum: float = 0.9,
         weight_decay: float = 0.0005,
         epochs: int = 100,
+        # Trainer args
         num_clusters: int = 1000,
         pca_dim: int = 256,
         idf_method: str = "udg",
@@ -34,121 +48,37 @@ class UDGTrainer(BaseTrainer):
         super().__init__(
             net,
             labeled_train_loader,
+            unlabeled_train_loader,
+            test_id_loader,
+            test_ood_loader_list,
+            evaluator,
+            metrics_logger,
+            output_dir,
+            save_all_model,
             learning_rate=learning_rate,
             momentum=momentum,
             weight_decay=weight_decay,
             epochs=epochs,
+            lambda_oe=lambda_oe,
         )
-
-        self.unlabeled_train_loader = unlabeled_train_loader
-
         self.num_clusters = num_clusters
         self.idf_method = idf_method
         self.purity_ind_thresh = purity_ind_thresh
         self.purity_ood_thresh = purity_ood_thresh
         self.oe_enhance_ratio = oe_enhance_ratio
-        self.lambda_oe = lambda_oe
         self.lambda_aux = lambda_aux
 
         # Init clustering algorithm
         self.k_means = KMeans(k=num_clusters, pca_dim=pca_dim)
 
-    def train_epoch(self):
-        self._run_clustering()
-        metrics = self._compute_loss()
-
-        return metrics
-
-    def _compute_loss(self):
-        self.net.train()  # enter train mode
-
-        loss_avg, loss_cls_avg, loss_oe_avg, loss_aux_avg = 0.0, 0.0, 0.0, 0.0
-        train_dataiter = iter(self.labeled_train_loader)
-        unlabeled_dataiter = iter(self.unlabeled_train_loader)
-        for train_step in range(1, len(train_dataiter) + 1):
-            batch = next(train_dataiter)
-            try:
-                unlabeled_batch = next(unlabeled_dataiter)
-            except StopIteration:
-                unlabeled_dataiter = iter(self.unlabeled_train_loader)
-                unlabeled_batch = next(unlabeled_dataiter)
-            data = batch["data"].cuda()
-            unlabeled_data = unlabeled_batch["data"].cuda()
-
-            # concat labeled and unlabeled data
-            logits_cls, logits_aux = self.net(data, return_aux=True)
-            logits_oe_cls, logits_oe_aux = self.net(unlabeled_data, return_aux=True)
-
-            # classification loss
-            concat_logits_cls = torch.cat([logits_cls, logits_oe_cls])
-            concat_label = torch.cat(
-                [
-                    batch["label"],
-                    unlabeled_batch["pseudo_label"].type_as(batch["label"]),
-                ]
-            )
-            loss_cls = F.cross_entropy(
-                concat_logits_cls[concat_label != -1],
-                concat_label[concat_label != -1].cuda(),
-            )
-            # oe loss
-            concat_softlabel = torch.cat(
-                [batch["soft_label"], unlabeled_batch["pseudo_softlabel"]]
-            )
-            concat_conf = torch.cat([batch["ood_conf"], unlabeled_batch["ood_conf"]])
-            loss_oe = rew_sce(
-                concat_logits_cls[concat_label == -1],
-                concat_softlabel[concat_label == -1].cuda(),
-                concat_conf[concat_label == -1].cuda(),
-            )
-            # aux loss
-            concat_logits_aux = torch.cat([logits_aux, logits_oe_aux])
-            concat_cluster_id = torch.cat(
-                [batch["cluster_id"], unlabeled_batch["cluster_id"]]
-            )
-            concat_cluster_reweight = torch.cat(
-                [batch["cluster_reweight"], unlabeled_batch["cluster_reweight"]]
-            )
-            loss_aux = rew_ce(
-                concat_logits_aux,
-                concat_cluster_id.cuda(),
-                concat_cluster_reweight.cuda(),
-            )
-
-            # loss addition
-            loss = loss_cls + self.lambda_oe * loss_oe + self.lambda_aux * loss_aux
-            # backward
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-            self.scheduler.step()
-
-            with torch.no_grad():
-                # exponential moving average, show smooth values
-                loss_cls_avg = loss_cls_avg * 0.8 + float(loss_cls) * 0.2
-                loss_oe_avg = loss_oe_avg * 0.8 + float(self.lambda_oe * loss_oe) * 0.2
-                loss_aux_avg = (
-                    loss_aux_avg * 0.8 + float(self.lambda_aux * loss_aux) * 0.2
-                )
-                loss_avg = loss_avg * 0.8 + float(loss) * 0.2
-
-        metrics = {}
-        metrics["train_cls_loss"] = loss_cls_avg
-        metrics["train_oe_loss"] = loss_oe_avg
-        metrics["train_aux_loss"] = loss_aux_avg
-        metrics["train_loss"] = loss_avg
-
-        return metrics
-
-    def _run_clustering(self):
+    def before_epoch(self):
+        # Run clustering
+        # FIXME Why eval mode?
         self.net.eval()
 
         start_time = time.time()
         # get data from train loader
-        print(
-            "######### Clustering: starting gather training features... ############",
-            flush=True,
-        )
+        logger.info("Clustering: starting gather training features...")
         # gather train image feature
         train_idx_list, unlabeled_idx_list, feature_list, train_label_list = (
             [],
@@ -206,7 +136,7 @@ class UDGTrainer(BaseTrainer):
         unlabeled_pseudo_list = sort_array(unlabeled_pseudo_list, unlabeled_idx_list)
         torch.cuda.empty_cache()
 
-        print("Assigning Cluster Labels...", flush=True)
+        logger.info("Assigning Cluster Labels...")
         cluster_id = self.k_means.cluster(feature_list)
         train_cluster_id = cluster_id[:num_train_data]
         unlabeled_cluster_id = cluster_id[num_train_data:]
@@ -232,7 +162,7 @@ class UDGTrainer(BaseTrainer):
             num_train_data:
         ]
 
-        print("In-Distribution Filtering (with OOD Enhancement)...", flush=True)
+        logger.info("In-Distribution Filtering (with OOD Enhancement)...")
         old_train_pseudo_label = self.labeled_train_loader.dataset.pseudo_label
         old_unlabeled_pseudo_label = self.unlabeled_train_loader.dataset.pseudo_label
         old_pseudo_label = np.append(
@@ -268,16 +198,14 @@ class UDGTrainer(BaseTrainer):
                     majority_label = label_in_cluster[purity > purity_ood_thresh][0]
                     if majority_label == -1:
                         new_ood_conf[cluster_id == cluster_idx] = self.oe_enhance_ratio
-            print(f"{total_num_to_filter} number of sample filtered!", flush=True)
+            logger.info(f"{total_num_to_filter} number of sample filtered!")
 
         elif self.idf_method == "conf":
             conf_thresh = self.purity_ind_thresh
             new_pseudo_label[num_train_data:][
                 unlabeled_conf_list > conf_thresh
             ] = unlabeled_pseudo_list[unlabeled_conf_list > conf_thresh]
-            print(
-                f"Filter {sum(unlabeled_conf_list > conf_thresh)} samples", flush=True
-            )
+            logger.info(f"Filter {sum(unlabeled_conf_list > conf_thresh)} samples")
         elif self.idf_method == "sort":
             conf_thresh = self.purity_ind_thresh
             num_to_filter = int((1 - conf_thresh) * len(old_unlabeled_pseudo_label))
@@ -285,16 +213,16 @@ class UDGTrainer(BaseTrainer):
             new_pseudo_label[num_train_data:][new_id_index] = unlabeled_pseudo_list[
                 new_id_index
             ]
-            print(f"Filter {num_to_filter} samples", flush=True)
+            logger.info(f"Filter {num_to_filter} samples")
         elif self.idf_method == "none":
-            print(f"IDF Disabled, 0 samples filtered", flush=True)
+            logger.info(f"IDF Disabled, 0 samples filtered")
 
         self.unlabeled_train_loader.dataset.pseudo_label = new_pseudo_label[
             num_train_data:
         ]
         self.unlabeled_train_loader.dataset.ood_conf = new_ood_conf[num_train_data:]
 
-        print("Randomize Auxiliary Head...", flush=True)
+        logger.info("Randomize Auxiliary Head...")
         if hasattr(self.net, "fc_aux"):
             # reset auxiliary branch
             self.net.fc_aux.weight.data.normal_(mean=0.0, std=0.01)
@@ -304,9 +232,72 @@ class UDGTrainer(BaseTrainer):
             self.net.fc.weight.data.normal_(mean=0.0, std=0.01)
             self.net.fc.bias.data.zero_()
 
-        print(
-            "######### Online Clustering Completed! Duration: {:.2f}s ############".format(
+        logger.info(
+            "Online Clustering Completed! Duration: {:.2f}s".format(
                 time.time() - start_time
             ),
-            flush=True,
         )
+
+    def train_step(self, batch, unlabeled_batch):
+        data = batch["data"].cuda()
+        unlabeled_data = unlabeled_batch["data"].cuda()
+
+        # concat labeled and unlabeled data
+        logits_cls, logits_aux = self.net(data, return_aux=True)
+        logits_oe_cls, logits_oe_aux = self.net(unlabeled_data, return_aux=True)
+
+        # classification loss
+        concat_logits_cls = torch.cat([logits_cls, logits_oe_cls])
+        concat_label = torch.cat(
+            [
+                batch["label"],
+                unlabeled_batch["pseudo_label"].type_as(batch["label"]),
+            ]
+        )
+        loss_cls = F.cross_entropy(
+            concat_logits_cls[concat_label != -1],
+            concat_label[concat_label != -1].cuda(),
+        )
+        # oe loss
+        concat_softlabel = torch.cat(
+            [batch["soft_label"], unlabeled_batch["pseudo_softlabel"]]
+        )
+        concat_conf = torch.cat([batch["ood_conf"], unlabeled_batch["ood_conf"]])
+        loss_oe = rew_sce(
+            concat_logits_cls[concat_label == -1],
+            concat_softlabel[concat_label == -1].cuda(),
+            concat_conf[concat_label == -1].cuda(),
+        )
+        # aux loss
+        concat_logits_aux = torch.cat([logits_aux, logits_oe_aux])
+        concat_cluster_id = torch.cat(
+            [batch["cluster_id"], unlabeled_batch["cluster_id"]]
+        )
+        concat_cluster_reweight = torch.cat(
+            [batch["cluster_reweight"], unlabeled_batch["cluster_reweight"]]
+        )
+        loss_aux = rew_ce(
+            concat_logits_aux,
+            concat_cluster_id.cuda(),
+            concat_cluster_reweight.cuda(),
+        )
+
+        # loss addition
+        loss_oe *= self.lambda_oe
+        loss_aux *= self.lambda_aux
+        loss = loss_cls + loss_oe + loss_aux
+
+        # backward
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        self.scheduler.step()
+
+        # Record and log metrics
+        metrics_dict = {}
+        metrics_dict["train/loss_cls"] = loss_cls
+        metrics_dict["train/loss_oe"] = loss_oe
+        metrics_dict["train/loss_aux"] = loss_aux
+        metrics_dict["train/loss"] = loss
+
+        return metrics_dict

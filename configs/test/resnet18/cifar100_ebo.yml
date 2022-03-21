@@ -1,0 +1,17 @@
+# Dataset settings
+dataset_type: scood # choices: [scood, ddood]
+id_dataset: cifar100 # choices: [cifar10, cifar100]
+ood_datasets: [cifar10, texture, svhn, tin, lsun, places365]
+# Whether to evaluate each dataset individually, or combine them all altogether
+eval_method: each # choices: [each, full]
+batch_size: 200
+# Type of interpolation when resizing images
+interpolation: bilinear # choices: [nearest, bilinear]
+
+network: res18 # choices: [res18, wrn, densenet]
+
+# Post-processing method
+postprocess: ebo # choices: [none, ebo, odin]
+postprocess_args:
+  temperature: 1 # for ebo and odin
+  # noise: 0.0014 # for odin

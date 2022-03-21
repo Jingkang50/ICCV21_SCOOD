@@ -109,6 +109,7 @@ class ResNet18(nn.Module):
         out = self.layer2(out)
         out = self.layer3(out)
         featconv = self.layer4(out)
+        print(featconv.shape)
         out = self.avgpool(featconv)
         feat = out.view(out.size(0), -1)
         logits_cls = self.fc(feat)

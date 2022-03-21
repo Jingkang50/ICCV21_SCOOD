@@ -12,3 +12,6 @@ dependencies:
   - pip
   - pip:
     - pyyaml
+    - tensorboard
+    - timm
+    - rich

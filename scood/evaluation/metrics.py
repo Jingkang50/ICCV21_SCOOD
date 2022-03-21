@@ -1,8 +1,11 @@
 import csv
 import os
+from logging import getLogger
 
 import numpy as np
 from sklearn import metrics
+
+logger = getLogger()
 
 
 # fpr_recall
@@ -80,12 +83,12 @@ def compute_all_metrics(conf, label, pred, file_path=None, verbose=True):
     accuracy = acc(pred, label)
 
     if verbose:
-        print(
+        logger.info(
             "FPR@{}: {:.2f}, AUROC: {:.2f}, AUPR_IN: {:.2f}, AUPR_OUT: {:.2f}".format(
                 recall, 100 * fpr, 100 * auroc, 100 * aupr_in, 100 * aupr_out
             )
         )
-        print(
+        logger.info(
             "CCR: {:.2f}, {:.2f}, {:.2f}, {:.2f}, ACC: {:.2f}".format(
                 ccr_4 * 100, ccr_3 * 100, ccr_2 * 100, ccr_1 * 100, accuracy * 100
             )
